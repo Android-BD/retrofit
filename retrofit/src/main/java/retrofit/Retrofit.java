@@ -171,6 +171,8 @@ public final class Retrofit {
   /**
    * Returns the {@link CallAdapter} for {@code returnType} from the available {@linkplain
    * #callAdapterFactories() factories}.
+   *
+   * @throws IllegalArgumentException if no call adapter available for {@code type}.
    */
   public CallAdapter<?> callAdapter(Type returnType, Annotation[] annotations) {
     return nextCallAdapter(null, returnType, annotations);
@@ -179,6 +181,8 @@ public final class Retrofit {
   /**
    * Returns the {@link CallAdapter} for {@code returnType} from the available {@linkplain
    * #callAdapterFactories() factories} except {@code skipPast}.
+   *
+   * @throws IllegalArgumentException if no call adapter available for {@code type}.
    */
   public CallAdapter<?> nextCallAdapter(CallAdapter.Factory skipPast, Type returnType,
       Annotation[] annotations) {
@@ -218,6 +222,8 @@ public final class Retrofit {
   /**
    * Returns a {@link Converter} for {@code type} to {@link RequestBody} from the available
    * {@linkplain #converterFactories() factories}.
+   *
+   * @throws IllegalArgumentException if no converter available for {@code type}.
    */
   public <T> Converter<T, RequestBody> requestConverter(Type type, Annotation[] annotations) {
     checkNotNull(type, "type == null");
@@ -244,6 +250,8 @@ public final class Retrofit {
   /**
    * Returns a {@link Converter} for {@link ResponseBody} to {@code type} from the available
    * {@linkplain #converterFactories() factories}.
+   *
+   * @throws IllegalArgumentException if no converter available for {@code type}.
    */
   public <T> Converter<ResponseBody, T> responseConverter(Type type, Annotation[] annotations) {
     checkNotNull(type, "type == null");
@@ -265,6 +273,28 @@ public final class Retrofit {
       builder.append("\n * ").append(converterFactory.getClass().getName());
     }
     throw new IllegalArgumentException(builder.toString());
+  }
+
+  /**
+   * Returns a {@link Converter} for {@code type} to {@link String} from the available
+   * {@linkplain #converterFactories() factories}.
+   */
+  public <T> Converter<T, String> stringConverter(Type type, Annotation[] annotations) {
+    checkNotNull(type, "type == null");
+    checkNotNull(annotations, "annotations == null");
+
+    for (int i = 0, count = converterFactories.size(); i < count; i++) {
+      Converter<?, String> converter =
+          converterFactories.get(i).toString(type, annotations);
+      if (converter != null) {
+        //noinspection unchecked
+        return (Converter<T, String>) converter;
+      }
+    }
+
+    // Nothing matched. Resort to default converter which just calls toString().
+    //noinspection unchecked
+    return (Converter<T, String>) BuiltInConverters.ToStringConverter.INSTANCE;
   }
 
   public Executor callbackExecutor() {

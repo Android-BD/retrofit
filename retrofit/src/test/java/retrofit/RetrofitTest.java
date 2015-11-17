@@ -27,6 +27,7 @@ import org.junit.Test;
 import retrofit.http.Body;
 import retrofit.http.GET;
 import retrofit.http.POST;
+import retrofit.http.Query;
 
 import static com.squareup.okhttp.mockwebserver.SocketPolicy.DISCONNECT_AT_START;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
@@ -49,6 +50,8 @@ public final class RetrofitTest {
     @GET("/") Call<ResponseBody> getResponseBody();
     @GET("/") Call<Void> getVoid();
     @POST("/") Call<ResponseBody> postRequestBody(@Body RequestBody body);
+    @GET("/") Call<ResponseBody> queryString(@Query("foo") String foo);
+    @GET("/") Call<ResponseBody> queryObject(@Query("foo") Object foo);
   }
   interface FutureMethod {
     @GET("/") Future<String> method();
@@ -70,7 +73,8 @@ public final class RetrofitTest {
   }
   interface Annotated {
     @GET("/") @Foo Call<String> method();
-    @POST("/") Call<ResponseBody> parameter(@Foo @Body String param);
+    @POST("/") Call<ResponseBody> bodyParameter(@Foo @Body String param);
+    @GET("/") Call<ResponseBody> queryParameter(@Foo @Query("foo") Object foo);
 
     @Retention(RUNTIME)
     @interface Foo {}
@@ -169,7 +173,7 @@ public final class RetrofitTest {
         }
         return new CallAdapter<Call<?>>() {
           @Override public Type responseType() {
-            return Utils.getSingleParameterUpperBound((ParameterizedType) returnType);
+            return Utils.getParameterUpperBound(0, (ParameterizedType) returnType);
           }
 
           @Override public <R> Call<R> adapt(Call<R> call) {
@@ -257,7 +261,7 @@ public final class RetrofitTest {
     }
   }
 
-  @Test public void methodAnnotationsPassedToConverter() {
+  @Test public void methodAnnotationsPassedToResponseBodyConverter() {
     final AtomicReference<Annotation[]> annotationsRef = new AtomicReference<>();
     class MyConverterFactory extends Converter.Factory {
       @Override
@@ -277,7 +281,7 @@ public final class RetrofitTest {
     assertThat(annotations).hasAtLeastOneElementOfType(Annotated.Foo.class);
   }
 
-  @Test public void parameterAnnotationsPassedToConverter() {
+  @Test public void parameterAnnotationsPassedToRequestBodyConverter() {
     final AtomicReference<Annotation[]> annotationsRef = new AtomicReference<>();
     class MyConverterFactory extends Converter.Factory {
       @Override
@@ -291,10 +295,62 @@ public final class RetrofitTest {
         .addConverterFactory(new MyConverterFactory())
         .build();
     Annotated annotated = retrofit.create(Annotated.class);
-    annotated.parameter(null); // Trigger internal setup.
+    annotated.bodyParameter(null); // Trigger internal setup.
 
     Annotation[] annotations = annotationsRef.get();
     assertThat(annotations).hasAtLeastOneElementOfType(Annotated.Foo.class);
+  }
+
+  @Test public void parameterAnnotationsPassedToStringConverter() {
+    final AtomicReference<Annotation[]> annotationsRef = new AtomicReference<>();
+    class MyConverterFactory extends Converter.Factory {
+      @Override public Converter<?, String> toString(Type type, Annotation[] annotations) {
+        annotationsRef.set(annotations);
+
+        return new Converter<Object, String>() {
+          @Override public String convert(Object value) throws IOException {
+            return String.valueOf(value);
+          }
+        };
+      }
+    }
+    Retrofit retrofit = new Retrofit.Builder()
+        .baseUrl(server.url("/"))
+        .addConverterFactory(new MyConverterFactory())
+        .build();
+    Annotated annotated = retrofit.create(Annotated.class);
+    annotated.queryParameter(null); // Trigger internal setup.
+
+    Annotation[] annotations = annotationsRef.get();
+    assertThat(annotations).hasAtLeastOneElementOfType(Annotated.Foo.class);
+  }
+
+  @Test public void stringConverterNotCalledForString() {
+    class MyConverterFactory extends Converter.Factory {
+      @Override public Converter<?, String> toString(Type type, Annotation[] annotations) {
+        throw new AssertionError();
+      }
+    }
+    Retrofit retrofit = new Retrofit.Builder()
+        .baseUrl(server.url("/"))
+        .addConverterFactory(new MyConverterFactory())
+        .build();
+    CallMethod service = retrofit.create(CallMethod.class);
+    service.queryString(null);
+  }
+
+  @Test public void stringConverterReturningNullResultsInDefault() {
+    class MyConverterFactory extends Converter.Factory {
+      @Override public Converter<?, String> toString(Type type, Annotation[] annotations) {
+        return null;
+      }
+    }
+    Retrofit retrofit = new Retrofit.Builder()
+        .baseUrl(server.url("/"))
+        .addConverterFactory(new MyConverterFactory())
+        .build();
+    CallMethod service = retrofit.create(CallMethod.class);
+    service.queryObject(null);
   }
 
   @Test public void missingConverterThrowsOnNonRequestBody() throws IOException {
@@ -659,6 +715,27 @@ public final class RetrofitTest {
 
     verify(factory1).fromResponseBody(type, annotations);
     verifyNoMoreInteractions(factory1);
+  }
+
+  @Test public void stringConverterFactoryQueried() {
+    Type type = Object.class;
+    Annotation[] annotations = new Annotation[0];
+
+    Converter<?, String> expectedAdapter = mock(Converter.class);
+    Converter.Factory factory = mock(Converter.Factory.class);
+
+    Retrofit retrofit = new Retrofit.Builder()
+        .baseUrl("http://example.com/")
+        .addConverterFactory(factory)
+        .build();
+
+    doReturn(expectedAdapter).when(factory).toString(type, annotations);
+
+    Converter<?, String> actualAdapter = retrofit.stringConverter(type, annotations);
+    assertThat(actualAdapter).isSameAs(expectedAdapter);
+
+    verify(factory).toString(type, annotations);
+    verifyNoMoreInteractions(factory);
   }
 
   @Test public void converterFactoryPropagated() {
